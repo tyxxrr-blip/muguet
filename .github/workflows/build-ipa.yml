@@ -1,0 +1,58 @@
+name: Build GTA V iOS IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          ACTIVE="$(xcode-select -p | sed 's#/Contents/Developer$##')"
+          for x in /Applications/Xcode*.app; do
+            [ -e "$x" ] || continue
+            if [ "$x" != "$ACTIVE" ]; then
+              sudo rm -rf "$x"
+            fi
+          done
+          df -h /
+
+      - name: Install tools
+        run: |
+          brew install xcodegen binaryen
+          if ! command -v rustup >/dev/null; then
+            brew install rustup
+          fi
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup target add aarch64-apple-ios --toolchain 1.98.1
+
+      - name: Download game.wasm
+        env:
+          GAME_WASM_URL: ${{ secrets.GAME_WASM_URL }}
+        run: |
+          test -n "$GAME_WASM_URL"
+          curl -fL --retry 3 "$GAME_WASM_URL" \
+            -o "$RUNNER_TEMP/game.wasm"
+          ls -lh "$RUNNER_TEMP/game.wasm"
+
+      - name: Build IPA
+        run: |
+          FREE=1 BUNDLE_ID=com.example.muguet \
+            ./make-ios.sh "$RUNNER_TEMP/game.wasm" --ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Muguet-IPA
+          path: build/Muguet.ipa
+          if-no-files-found: error
+          retention-days: 3
